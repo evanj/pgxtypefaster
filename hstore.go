@@ -152,7 +152,7 @@ func (encodePlanHstoreCodecText) Encode(value any, buf []byte) (newBuf []byte, e
 		if firstPair {
 			firstPair = false
 		} else {
-			buf = append(buf, ',')
+			buf = append(buf, ',', ' ')
 		}
 
 		// unconditionally quote hstore keys/values like Postgres does
