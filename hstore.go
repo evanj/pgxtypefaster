@@ -3,6 +3,7 @@
 package pgxtypefaster
 
 import (
+	"context"
 	"database/sql/driver"
 	"encoding/binary"
 	"errors"
@@ -10,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/evanj/pgxtypefaster/internal/pgio"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -19,6 +21,40 @@ type HstoreScanner interface {
 
 type HstoreValuer interface {
 	HstoreValue() (Hstore, error)
+}
+
+var errHstoreDoesNotExist = errors.New("postgres type hstore does not exist (the extension may not be loaded)")
+
+// queryHstoreOID returns the Postgres Object Identifer (OID) for the "hstore" type. This must be
+// done for each separate Postgres database, since the OID can be different. It returns
+// errHstoreDoesNotExist if the row does not exist.
+func queryHstoreOID(ctx context.Context, conn *pgx.Conn) (uint32, error) {
+	// get the hstore OID: it varies because hstore is an extension and not built-in
+	var hstoreOID uint32
+	err := conn.QueryRow(ctx, `select oid from pg_type where typname = 'hstore'`).Scan(&hstoreOID)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			return 0, errHstoreDoesNotExist
+		}
+		return 0, err
+	}
+	return hstoreOID, nil
+}
+
+// registerHstoreTypeMap registers the hstore type with typeMap. It uses conn to query for
+func registerHstoreTypeMap(hstoreOID uint32, typeMap *pgtype.Map) {
+	typeMap.RegisterType(&pgtype.Type{Codec: HstoreCodec{}, Name: "hstore", OID: hstoreOID})
+}
+
+// RegisterHstore registers the Hstore type with conn's default type map. It queries the database
+// for the Hstore OID to be able to register it.
+func RegisterHstore(ctx context.Context, conn *pgx.Conn) error {
+	hstoreOID, err := queryHstoreOID(ctx, conn)
+	if err != nil {
+		return err
+	}
+	registerHstoreTypeMap(hstoreOID, conn.TypeMap())
+	return nil
 }
 
 // Hstore represents an hstore column that can be null or have null values

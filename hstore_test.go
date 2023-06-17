@@ -1,11 +1,84 @@
 package pgxtypefaster_test
 
 import (
+	"reflect"
 	"testing"
 
 	"github.com/evanj/pgxtypefaster"
 	"github.com/jackc/pgx/v5/pgtype"
 )
+
+func fasterToOrig(h pgxtypefaster.Hstore) any {
+	out := make(pgtype.Hstore, len(h))
+	for k, v := range h {
+		if v.Valid {
+			out[k] = &v.String
+		} else {
+			out[k] = nil
+		}
+	}
+	return out
+}
+
+// allHstoreConfigs contains all the Hstore codecs to test.
+var allHstoreConfigs = []struct {
+	name                     string
+	encodePlan               pgtype.EncodePlan
+	scanPlan                 pgtype.ScanPlan
+	fasterHstoreToConfigType func(h pgxtypefaster.Hstore) any
+	newScanType              func() any
+}{
+	{
+		"pgxtypefaster/text",
+		pgxtypefaster.HstoreCodec{}.PlanEncode(nil, 0, pgtype.TextFormatCode, pgxtypefaster.Hstore{}),
+		pgxtypefaster.HstoreCodec{}.PlanScan(nil, 0, pgtype.TextFormatCode, (*pgxtypefaster.Hstore)(nil)),
+		func(h pgxtypefaster.Hstore) any { return h },
+		func() any { return &pgxtypefaster.Hstore{} },
+	},
+	{
+		"pgtype/text",
+		pgtype.HstoreCodec{}.PlanEncode(nil, 0, pgtype.TextFormatCode, pgtype.Hstore{}),
+		pgtype.HstoreCodec{}.PlanScan(nil, 0, pgtype.TextFormatCode, (*pgtype.Hstore)(nil)),
+		fasterToOrig,
+		func() any { return &pgtype.Hstore{} },
+	},
+	{
+		"pgxtypefaster/binary",
+		pgxtypefaster.HstoreCodec{}.PlanEncode(nil, 0, pgtype.BinaryFormatCode, pgxtypefaster.Hstore{}),
+		pgxtypefaster.HstoreCodec{}.PlanScan(nil, 0, pgtype.BinaryFormatCode, (*pgxtypefaster.Hstore)(nil)),
+		func(h pgxtypefaster.Hstore) any { return h },
+		func() any { return &pgxtypefaster.Hstore{} },
+	},
+	{
+		"pgtype/binary",
+		pgtype.HstoreCodec{}.PlanEncode(nil, 0, pgtype.BinaryFormatCode, pgtype.Hstore{}),
+		pgtype.HstoreCodec{}.PlanScan(nil, 0, pgtype.BinaryFormatCode, (*pgtype.Hstore)(nil)),
+		fasterToOrig,
+		func() any { return &pgtype.Hstore{} },
+	},
+}
+
+func init() {
+	// validate allHstoreConfigsgo
+	for _, config := range allHstoreConfigs {
+		if config.encodePlan == nil {
+			panic(config.name)
+		}
+		if config.scanPlan == nil {
+			panic(config.name)
+		}
+		out1 := config.fasterHstoreToConfigType(nil)
+		out2 := config.newScanType()
+		out2Type := reflect.TypeOf(out2)
+		if out2Type.Kind() != reflect.Pointer {
+			panic("newScanType() must return a pointer to an hstore type")
+		}
+		out2ElemType := out2Type.Elem()
+		if reflect.TypeOf(out1) != out2ElemType {
+			panic("types of fasterHstoreToConfigType and *newScanType() must match")
+		}
+	}
+}
 
 func BenchmarkHstoreEncode(b *testing.B) {
 	stringPtr := func(s string) *string {
@@ -24,8 +97,8 @@ func BenchmarkHstoreEncode(b *testing.B) {
 		encodeArg  any
 	}{
 		{"pgxtypefaster/text", pgxtypefaster.HstoreCodec{}.PlanEncode(nil, 0, pgtype.TextFormatCode, pgxtypefasterH), pgxtypefasterH},
-		{"pgxtypefaster/binary", pgxtypefaster.HstoreCodec{}.PlanEncode(nil, 0, pgtype.BinaryFormatCode, pgxtypefasterH), pgxtypefasterH},
 		{"pgtype/text", pgtype.HstoreCodec{}.PlanEncode(nil, 0, pgtype.TextFormatCode, pgtypeH), pgtypeH},
+		{"pgxtypefaster/binary", pgxtypefaster.HstoreCodec{}.PlanEncode(nil, 0, pgtype.BinaryFormatCode, pgxtypefasterH), pgxtypefasterH},
 		{"pgtype/binary", pgtype.HstoreCodec{}.PlanEncode(nil, 0, pgtype.BinaryFormatCode, pgtypeH), pgtypeH},
 	}
 
@@ -92,6 +165,18 @@ func BenchmarkHstoreScan(b *testing.B) {
 			}
 		}
 	})
+	var fasterCompatH pgxtypefaster.HstoreCompat
+	b.Run("fastercompat/databasesql.Scan", func(b *testing.B) {
+		b.ReportAllocs()
+		for i := 0; i < b.N; i++ {
+			for _, str := range benchStrings {
+				err := fasterCompatH.Scan(str)
+				if err != nil {
+					b.Fatal(err)
+				}
+			}
+		}
+	})
 	var h pgtype.Hstore
 	b.Run("pgtype/databasesql.Scan", func(b *testing.B) {
 		b.ReportAllocs()
@@ -113,8 +198,10 @@ func BenchmarkHstoreScan(b *testing.B) {
 		scanArg    any
 	}{
 		{"pgxfastertype/text", pgxtypefaster.HstoreCodec{}.PlanScan(nil, 0, pgtype.TextFormatCode, &fasterH), textBytes, &fasterH},
-		{"pgxfastertype/binary", pgxtypefaster.HstoreCodec{}.PlanScan(nil, 0, pgtype.BinaryFormatCode, &fasterH), binaryBytes, &fasterH},
+		{"fastercompat/text", pgxtypefaster.HstoreCompatCodec{}.PlanScan(nil, 0, pgtype.TextFormatCode, &fasterCompatH), textBytes, &fasterCompatH},
 		{"pgtype/text", pgtype.HstoreCodec{}.PlanScan(nil, 0, pgtype.TextFormatCode, &h), textBytes, &h},
+		{"pgxfastertype/binary", pgxtypefaster.HstoreCodec{}.PlanScan(nil, 0, pgtype.BinaryFormatCode, &fasterH), binaryBytes, &fasterH},
+		{"fastercompat/binary", pgxtypefaster.HstoreCompatCodec{}.PlanScan(nil, 0, pgtype.BinaryFormatCode, &fasterCompatH), binaryBytes, &fasterCompatH},
 		{"pgtype/binary", pgtype.HstoreCodec{}.PlanScan(nil, 0, pgtype.BinaryFormatCode, &h), binaryBytes, &h},
 	}
 	for _, scanConfig := range scanConfigs {
