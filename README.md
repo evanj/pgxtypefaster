@@ -1,6 +1,6 @@
 # Faster pgx types
 
-This repository contains types for use with the (pgx Go Postgres driver)[https://github.com/jackc/pgx] that are faster, but are in some way incompatible. It currently only contains two variants of Hstore. They use a single backing string for all key/value pairs, instead of separate strings. This makes it about ~40% faster when parsing values from Postgres, but may have a larger memory footprint if an application holds on to a small number of the keys or values.
+This repository contains types for use with the [pgx Go Postgres driver](https://github.com/jackc/pgx) that are faster, but are in some way incompatible. It currently only contains two variants of Hstore. They use a single backing string for all key/value pairs, instead of separate strings. This makes it about ~40% faster when parsing values from Postgres, but may have a larger memory footprint if an application holds on to a small number of the keys or values.
 
 * `Hstore`: This is a `map[string]pgtype.Text` instead of `map[string]*string` as used by `pgtype.Hstore`. Since this removes pointers, it requires one fewer allocation per Hstore, and is about ~5% faster when parsing. However, it appears to allocate a bit more memory, I think because the map itself is larger. It is not directly API compatible with `pgtype.Hstore`.
 * `HstoreCompat`: This is API compatible with `pgx/pgtype.Hstore` because it uses a `map[string]*string`, but is about ~5% slower because of it.

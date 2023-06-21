@@ -23,7 +23,7 @@ type HstoreValuer interface {
 	HstoreValue() (Hstore, error)
 }
 
-var errHstoreDoesNotExist = errors.New("postgres type hstore does not exist (the extension may not be loaded)")
+var ErrHstoreDoesNotExist = errors.New("postgres type hstore does not exist (the extension may not be loaded)")
 
 // queryHstoreOID returns the Postgres Object Identifer (OID) for the "hstore" type. This must be
 // done for each separate Postgres database, since the OID can be different. It returns
@@ -34,7 +34,7 @@ func queryHstoreOID(ctx context.Context, conn *pgx.Conn) (uint32, error) {
 	err := conn.QueryRow(ctx, `select oid from pg_type where typname = 'hstore'`).Scan(&hstoreOID)
 	if err != nil {
 		if err == pgx.ErrNoRows {
-			return 0, errHstoreDoesNotExist
+			return 0, ErrHstoreDoesNotExist
 		}
 		return 0, err
 	}

@@ -4,7 +4,7 @@ go 1.20
 
 require (
 	github.com/evanj/hacks v0.0.0-20230519195856-34ba7f4a6c00
-	github.com/jackc/pgx/v5 v5.4.1-0.20230616203137-bc8b1ca32003
+	github.com/jackc/pgx/v5 v5.4.1
 )
 
 require (

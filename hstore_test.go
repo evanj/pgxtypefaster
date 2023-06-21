@@ -12,7 +12,9 @@ func fasterToOrig(h pgxtypefaster.Hstore) any {
 	out := make(pgtype.Hstore, len(h))
 	for k, v := range h {
 		if v.Valid {
-			out[k] = &v.String
+			// can't use &v.String: it takes the address of the loop variable
+			s := v.String
+			out[k] = &s
 		} else {
 			out[k] = nil
 		}
@@ -20,14 +22,16 @@ func fasterToOrig(h pgxtypefaster.Hstore) any {
 	return out
 }
 
-// allHstoreConfigs contains all the Hstore codecs to test.
-var allHstoreConfigs = []struct {
+type hstoreTestCodecConfig struct {
 	name                     string
 	encodePlan               pgtype.EncodePlan
 	scanPlan                 pgtype.ScanPlan
 	fasterHstoreToConfigType func(h pgxtypefaster.Hstore) any
 	newScanType              func() any
-}{
+}
+
+// allHstoreConfigs contains all the Hstore codecs to test.
+var allHstoreConfigs = []hstoreTestCodecConfig{
 	{
 		"pgxtypefaster/text",
 		pgxtypefaster.HstoreCodec{}.PlanEncode(nil, 0, pgtype.TextFormatCode, pgxtypefaster.Hstore{}),
