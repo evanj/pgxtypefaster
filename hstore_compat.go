@@ -3,14 +3,27 @@
 package pgxtypefaster
 
 import (
+	"context"
 	"database/sql/driver"
 	"encoding/binary"
 	"fmt"
 	"strings"
 
 	"github.com/evanj/pgxtypefaster/internal/pgio"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
+
+// RegisterHstoreCompat registers the HstoreCompat type with conn's default type map. It queries
+// the database for the Hstore OID to be able to register it.
+func RegisterHstoreCompat(ctx context.Context, conn *pgx.Conn) error {
+	hstoreOID, err := queryHstoreOID(ctx, conn)
+	if err != nil {
+		return err
+	}
+	conn.TypeMap().RegisterType(&pgtype.Type{Codec: HstoreCompatCodec{}, Name: "hstore", OID: hstoreOID})
+	return nil
+}
 
 type HstoreCompatScanner interface {
 	ScanHstoreCompat(v HstoreCompat) error
@@ -54,7 +67,7 @@ func (h HstoreCompat) Value() (driver.Value, error) {
 		return nil, nil
 	}
 
-	buf, err := HstoreCodec{}.PlanEncode(nil, 0, pgtype.TextFormatCode, h).Encode(h, nil)
+	buf, err := HstoreCompatCodec{}.PlanEncode(nil, 0, pgtype.TextFormatCode, h).Encode(h, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -259,7 +272,7 @@ func (c HstoreCompatCodec) DecodeValue(m *pgtype.Map, oid uint32, format int16, 
 		return nil, nil
 	}
 
-	var hstore Hstore
+	var hstore HstoreCompat
 	err := codecScan(c, m, oid, format, src, &hstore)
 	if err != nil {
 		return nil, err

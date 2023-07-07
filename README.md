@@ -1,23 +1,24 @@
 # Faster pgx types
 
-This repository contains types for use with the [pgx Go Postgres driver](https://github.com/jackc/pgx) that are faster, but are in some way incompatible. It currently only contains two variants of Hstore. They use a single backing string for all key/value pairs, instead of separate strings. This makes it about ~40% faster when parsing values from Postgres, but may have a larger memory footprint if an application holds on to a small number of the keys or values.
+This repository contains types for the [pgx Go Postgres driver](https://github.com/jackc/pgx) that are faster, but have incompatible APIs. It currently contains two variants of `Hstore`. This Hstore implementation uses a single string for all key/value pairs, instead of separate strings. This makes it about ~40% faster when parsing values from Postgres. However, it can have a larger memory footprint, if an application keeps pointers to a subset of the keys/values.
 
-* `Hstore`: This is a `map[string]pgtype.Text` instead of `map[string]*string` as used by `pgtype.Hstore`. Since this removes pointers, it requires one fewer allocation per Hstore, and is about ~5% faster when parsing. However, it appears to allocate a bit more memory, I think because the map itself is larger. It is not directly API compatible with `pgtype.Hstore`.
-* `HstoreCompat`: This is API compatible with `pgx/pgtype.Hstore` because it uses a `map[string]*string`, but is about ~5% slower because of it.
+* `Hstore`: This is a `map[string]pgtype.Text` instead of `map[string]*string` as used by `pgtype.Hstore`. Since this removes pointers, it requires one fewer allocation per Hstore, and is about ~5% faster than `HstoreCompat` when parsing. However, it appears to allocate a bit more total memory, I think because the map itself is larger. It is not API compatible with `pgtype.Hstore`.
+* `HstoreCompat`: This is API compatible with `pgx/pgtype.Hstore` because it uses a `map[string]*string`, but is about ~5% slower.
 
 This code has the same LICENSE as the upstream repository since it basically copied the code then edited it. See the [original upstream pull request discussion for details](https://github.com/jackc/pgx/pull/1645) where it was decided not to make this change upstream.
 
-The only test is a fuzz test, since porting the tests was going to be challenging, and I hope that provides excellent coverage without a ton of work.
+The only tests are two fuzz test, since porting the tests was going to be challenging. The fuzz tests included here should provide excellent coverage, without too much code.
+
+## Using this type in your program
+
+To get the best performance, you want to use the binary protocol. To do that, you must register this type:
+
+TODO document
 
 
 ## Benchmark results
 
-The results show `Hstore` is about 5% faster than `HstoreCompat`. It uses one less allocation but a bit more memory.
-
-Both these types are quite a bit faster than `pgtype.Hstore` because they share a single backing string.
-
-
-Detailed results from this repository's benchmark, run with `go test . -bench=. -benchtime=2s`:
+Results from this repository's benchmark, run with `go test . -bench=. -benchtime=2s`:
 
 ### ARM M1 Max (Macbook Pro 2021)
 
@@ -34,5 +35,3 @@ BenchmarkHstoreScan/pgxfastertype/binary-10                   	  341541	      71
 BenchmarkHstoreScan/fastercompat/binary-10                    	  315151	      7467 ns/op	   21224 B/op	      41 allocs/op
 BenchmarkHstoreScan/pgtype/binary-10                          	  229638	     10381 ns/op	   20368 B/op	     316 allocs/op
 ```
-
-

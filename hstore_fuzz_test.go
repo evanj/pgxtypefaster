@@ -75,10 +75,7 @@ func isScannedHstoreEqual(input any, scanOutput any) bool {
 	return reflect.DeepEqual(outputDeref, input)
 }
 
-// NOTE: This does not pass with the upstream version of pgx right now, since it
-// does not round-trip
 func FuzzLocalRoundTrip(f *testing.F) {
-	f.Skip("TODO")
 	f.Add("", "", "a", "")
 	f.Add("k1", "v1", "k2", "v2")
 	f.Add(`\`, `"`, `,`, "v2")
@@ -148,7 +145,7 @@ func queryHstoreOID(ctx context.Context, conn *pgx.Conn) (uint32, error) {
 }
 
 // copied from pgxtypefaster TODO: refactor to reuse these functions
-func registerUpstreamHstore(ctx context.Context, conn *pgx.Conn) error {
+func registerPGXHstore(ctx context.Context, conn *pgx.Conn) error {
 	hstoreOID, err := queryHstoreOID(ctx, conn)
 	if err != nil {
 		return err
@@ -161,27 +158,37 @@ func registerUpstreamHstore(ctx context.Context, conn *pgx.Conn) error {
 func FuzzPGRoundTrip(f *testing.F) {
 	pgURL := postgrestest.New(f)
 	ctx := context.Background()
-	conn, err := pgx.Connect(ctx, pgURL)
+	connFasterHstore, err := pgx.Connect(ctx, pgURL)
 	if err != nil {
 		panic(err)
 	}
-	defer conn.Close(ctx)
+	defer connFasterHstore.Close(ctx)
 
-	_, err = conn.Exec(ctx, "create extension hstore")
+	_, err = connFasterHstore.Exec(ctx, "create extension hstore")
 	if err != nil {
 		panic(err)
 	}
-	err = pgxtypefaster.RegisterHstore(ctx, conn)
+	err = pgxtypefaster.RegisterHstore(ctx, connFasterHstore)
 	if err != nil {
 		panic(err)
 	}
 
-	connUpstream, err := pgx.Connect(ctx, pgURL)
+	connPGXHstore, err := pgx.Connect(ctx, pgURL)
 	if err != nil {
 		panic(err)
 	}
-	defer connUpstream.Close(ctx)
-	err = registerUpstreamHstore(ctx, connUpstream)
+	defer connPGXHstore.Close(ctx)
+	err = registerPGXHstore(ctx, connPGXHstore)
+	if err != nil {
+		panic(err)
+	}
+
+	connHstoreCompat, err := pgx.Connect(ctx, pgURL)
+	if err != nil {
+		panic(err)
+	}
+	defer connHstoreCompat.Close(ctx)
+	err = pgxtypefaster.RegisterHstoreCompat(ctx, connHstoreCompat)
 	if err != nil {
 		panic(err)
 	}
@@ -219,10 +226,12 @@ func FuzzPGRoundTrip(f *testing.F) {
 		conn        *pgx.Conn
 		codecConfig hstoreTestCodecConfig
 	}{
-		// first record is pgxfastertype
-		{conn, allHstoreConfigs[0]},
+		// first record is pgxfastertype.Hstore
+		{connFasterHstore, allHstoreConfigs[0]},
+		// second record is pgxfastertype.HstoreCompat
+		{connHstoreCompat, allHstoreConfigs[1]},
 		// second record is pgtype
-		{connUpstream, allHstoreConfigs[1]},
+		{connPGXHstore, allHstoreConfigs[2]},
 	}
 
 	f.Fuzz(func(t *testing.T, k1 string, v1 string, k2 string, v2 string) {
@@ -235,7 +244,6 @@ func FuzzPGRoundTrip(f *testing.F) {
 
 			// these modes use the text and binary protocols, respectively
 			for _, queryMode := range []pgx.QueryExecMode{pgx.QueryExecModeSimpleProtocol, pgx.QueryExecModeDescribeExec} {
-				// test both this package's type, and the original pgx type
 				for _, connConfig := range connConfigs {
 					input := connConfig.codecConfig.fasterHstoreToConfigType(variant)
 					row := connConfig.conn.QueryRow(ctx, query, queryMode, hstoreToArray(variant), input)

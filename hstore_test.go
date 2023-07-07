@@ -1,7 +1,9 @@
 package pgxtypefaster_test
 
 import (
+	"fmt"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/evanj/pgxtypefaster"
@@ -22,6 +24,10 @@ func fasterToOrig(h pgxtypefaster.Hstore) any {
 	return out
 }
 
+func fasterToCompat(h pgxtypefaster.Hstore) any {
+	return pgxtypefaster.HstoreCompat(fasterToOrig(h).(pgtype.Hstore))
+}
+
 type hstoreTestCodecConfig struct {
 	name                     string
 	encodePlan               pgtype.EncodePlan
@@ -40,6 +46,13 @@ var allHstoreConfigs = []hstoreTestCodecConfig{
 		func() any { return &pgxtypefaster.Hstore{} },
 	},
 	{
+		"pgxtypefaster_compat/text",
+		pgxtypefaster.HstoreCompatCodec{}.PlanEncode(nil, 0, pgtype.TextFormatCode, pgxtypefaster.HstoreCompat{}),
+		pgxtypefaster.HstoreCompatCodec{}.PlanScan(nil, 0, pgtype.TextFormatCode, (*pgxtypefaster.HstoreCompat)(nil)),
+		fasterToCompat,
+		func() any { return &pgxtypefaster.HstoreCompat{} },
+	},
+	{
 		"pgtype/text",
 		pgtype.HstoreCodec{}.PlanEncode(nil, 0, pgtype.TextFormatCode, pgtype.Hstore{}),
 		pgtype.HstoreCodec{}.PlanScan(nil, 0, pgtype.TextFormatCode, (*pgtype.Hstore)(nil)),
@@ -54,6 +67,13 @@ var allHstoreConfigs = []hstoreTestCodecConfig{
 		func() any { return &pgxtypefaster.Hstore{} },
 	},
 	{
+		"pgxtypefaster_compat/binary",
+		pgxtypefaster.HstoreCompatCodec{}.PlanEncode(nil, 0, pgtype.BinaryFormatCode, pgxtypefaster.HstoreCompat{}),
+		pgxtypefaster.HstoreCompatCodec{}.PlanScan(nil, 0, pgtype.BinaryFormatCode, (*pgxtypefaster.HstoreCompat)(nil)),
+		fasterToCompat,
+		func() any { return &pgxtypefaster.HstoreCompat{} },
+	},
+	{
 		"pgtype/binary",
 		pgtype.HstoreCodec{}.PlanEncode(nil, 0, pgtype.BinaryFormatCode, pgtype.Hstore{}),
 		pgtype.HstoreCodec{}.PlanScan(nil, 0, pgtype.BinaryFormatCode, (*pgtype.Hstore)(nil)),
@@ -63,10 +83,10 @@ var allHstoreConfigs = []hstoreTestCodecConfig{
 }
 
 func init() {
-	// validate allHstoreConfigsgo
+	// validate allHstoreConfigs
 	for _, config := range allHstoreConfigs {
 		if config.encodePlan == nil {
-			panic(config.name)
+			panic(fmt.Sprintf("%s encodePlan is nil (invalid arguments)", config.name))
 		}
 		if config.scanPlan == nil {
 			panic(config.name)
@@ -79,40 +99,29 @@ func init() {
 		}
 		out2ElemType := out2Type.Elem()
 		if reflect.TypeOf(out1) != out2ElemType {
-			panic("types of fasterHstoreToConfigType and *newScanType() must match")
+			panic(fmt.Sprintf("%s: types of fasterHstoreToConfigType=%T and *newScanType()=%s must match",
+				config.name, out1, out2ElemType.String()))
 		}
 	}
 }
 
 func BenchmarkHstoreEncode(b *testing.B) {
-	stringPtr := func(s string) *string {
-		return &s
-	}
-	pgtypeH := pgtype.Hstore{"a x": stringPtr("100"), "b": stringPtr("200"), "c": stringPtr("300"),
-		"d": stringPtr("400"), "e": stringPtr("500")}
-	pgxtypefasterH := pgxtypefaster.PGXToFasterHstore(pgtypeH)
-	for k, v := range pgtypeH {
-		pgxtypefasterH[k] = pgtype.Text{String: *v, Valid: true}
+	input := pgxtypefaster.Hstore{
+		"a x": pgxtypefaster.NewText("100"),
+		"b":   pgxtypefaster.NewText("200"),
+		"c":   pgxtypefaster.NewText("300"),
+		"d":   pgxtypefaster.NewText("400"),
+		"e":   pgxtypefaster.NewText("500"),
 	}
 
-	serializeConfigs := []struct {
-		name       string
-		encodePlan pgtype.EncodePlan
-		encodeArg  any
-	}{
-		{"pgxtypefaster/text", pgxtypefaster.HstoreCodec{}.PlanEncode(nil, 0, pgtype.TextFormatCode, pgxtypefasterH), pgxtypefasterH},
-		{"pgtype/text", pgtype.HstoreCodec{}.PlanEncode(nil, 0, pgtype.TextFormatCode, pgtypeH), pgtypeH},
-		{"pgxtypefaster/binary", pgxtypefaster.HstoreCodec{}.PlanEncode(nil, 0, pgtype.BinaryFormatCode, pgxtypefasterH), pgxtypefasterH},
-		{"pgtype/binary", pgtype.HstoreCodec{}.PlanEncode(nil, 0, pgtype.BinaryFormatCode, pgtypeH), pgtypeH},
-	}
-
-	for _, serializeConfig := range serializeConfigs {
+	for _, hstoreConfig := range allHstoreConfigs {
+		typeSpecificInput := hstoreConfig.fasterHstoreToConfigType(input)
 		var buf []byte
-		b.Run(serializeConfig.name, func(b *testing.B) {
+		b.Run(hstoreConfig.name, func(b *testing.B) {
 			b.ReportAllocs()
 			for i := 0; i < b.N; i++ {
 				var err error
-				buf, err = serializeConfig.encodePlan.Encode(serializeConfig.encodeArg, buf)
+				buf, err = hstoreConfig.encodePlan.Encode(typeSpecificInput, buf)
 				if err != nil {
 					b.Fatal(err)
 				}
@@ -195,25 +204,20 @@ func BenchmarkHstoreScan(b *testing.B) {
 	})
 
 	// benchmark the []byte scan API used by pgconn
-	scanConfigs := []struct {
-		name       string
-		scanPlan   pgtype.ScanPlan
-		inputBytes [][]byte
-		scanArg    any
-	}{
-		{"pgxfastertype/text", pgxtypefaster.HstoreCodec{}.PlanScan(nil, 0, pgtype.TextFormatCode, &fasterH), textBytes, &fasterH},
-		{"fastercompat/text", pgxtypefaster.HstoreCompatCodec{}.PlanScan(nil, 0, pgtype.TextFormatCode, &fasterCompatH), textBytes, &fasterCompatH},
-		{"pgtype/text", pgtype.HstoreCodec{}.PlanScan(nil, 0, pgtype.TextFormatCode, &h), textBytes, &h},
-		{"pgxfastertype/binary", pgxtypefaster.HstoreCodec{}.PlanScan(nil, 0, pgtype.BinaryFormatCode, &fasterH), binaryBytes, &fasterH},
-		{"fastercompat/binary", pgxtypefaster.HstoreCompatCodec{}.PlanScan(nil, 0, pgtype.BinaryFormatCode, &fasterCompatH), binaryBytes, &fasterCompatH},
-		{"pgtype/binary", pgtype.HstoreCodec{}.PlanScan(nil, 0, pgtype.BinaryFormatCode, &h), binaryBytes, &h},
-	}
-	for _, scanConfig := range scanConfigs {
-		b.Run(scanConfig.name, func(b *testing.B) {
+	// for _, scanConfig := range scanConfigs {
+	for _, hstoreConfig := range allHstoreConfigs {
+		// hack to select between the text format input and binary format input
+		inputBytes := textBytes
+		if strings.HasSuffix(hstoreConfig.name, "/binary") {
+			inputBytes = binaryBytes
+		}
+
+		scanArg := hstoreConfig.newScanType()
+		b.Run(hstoreConfig.name, func(b *testing.B) {
 			b.ReportAllocs()
 			for i := 0; i < b.N; i++ {
-				for _, input := range scanConfig.inputBytes {
-					err := scanConfig.scanPlan.Scan(input, scanConfig.scanArg)
+				for _, input := range inputBytes {
+					err := hstoreConfig.scanPlan.Scan(input, scanArg)
 					if err != nil {
 						b.Fatalf("input=%#v err=%s", string(input), err)
 					}

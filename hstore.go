@@ -41,11 +41,6 @@ func queryHstoreOID(ctx context.Context, conn *pgx.Conn) (uint32, error) {
 	return hstoreOID, nil
 }
 
-// registerHstoreTypeMap registers the hstore type with typeMap. It uses conn to query for
-func registerHstoreTypeMap(hstoreOID uint32, typeMap *pgtype.Map) {
-	typeMap.RegisterType(&pgtype.Type{Codec: HstoreCodec{}, Name: "hstore", OID: hstoreOID})
-}
-
 // RegisterHstore registers the Hstore type with conn's default type map. It queries the database
 // for the Hstore OID to be able to register it.
 func RegisterHstore(ctx context.Context, conn *pgx.Conn) error {
@@ -53,7 +48,7 @@ func RegisterHstore(ctx context.Context, conn *pgx.Conn) error {
 	if err != nil {
 		return err
 	}
-	registerHstoreTypeMap(hstoreOID, conn.TypeMap())
+	conn.TypeMap().RegisterType(&pgtype.Type{Codec: HstoreCodec{}, Name: "hstore", OID: hstoreOID})
 	return nil
 }
 
